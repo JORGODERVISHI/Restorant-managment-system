@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Realtime Test</title>
+</head>
+<body>
+  <h2>Orders:</h2>
+  <ul id="orders"></ul>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const socket = io("http://localhost:3000");
+
+    socket.on("new_order", (data) => {
+      const li = document.createElement("li");
+      li.innerText = "Order #" + data.order_id + " - Table " + data.table_id + " - Total: " + data.total;
+      document.getElementById("orders").appendChild(li);
+    });
+  </script>
+</body>
+</html>
