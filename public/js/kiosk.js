@@ -7,15 +7,16 @@ const { useState, useEffect } = React;
 const API_URL = 'http://localhost:3000';
 
 const categoryEmojis = {
-  'Antipasta': '🧀',
-  'Mishra': '🥩',
+  'Antipasta': '🥙',
+  'Mishra': '🍗',
   'Embelsira': '🍰',
   'Sallata': '🥗',
-  'Pije Alkolike': '🍷',
+  'Pije Alkolike': '🍸',
   'Pije Freskuese': '🥤',
   'Birra': '🍺',
   'Verera': '🍷',
   'Verëra': '🍷',
+  'KAFETERIA': '☕',
   'Uje': '💧',
   'Ujë': '💧'
 };
@@ -33,9 +34,15 @@ function KioskApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState('');
+  
+  // 🤖 AI-powered recommendations
+  const [popularItems, setPopularItems] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [pairings, setPairings] = useState({});
 
   useEffect(() => {
     fetchData();
+    loadAIData();
   }, []);
 
   const fetchData = async () => {
@@ -68,6 +75,31 @@ function KioskApp() {
       console.error('Error:', error);
       setError(error.message);
       setLoading(false);
+    }
+  };
+
+  const loadAIData = async () => {
+    try {
+      const [popularRes, recsRes, pairingsRes] = await Promise.all([
+        fetch(`${API_URL}/ai/popular-items`).catch(() => null),
+        fetch(`${API_URL}/ai/recommendations`).catch(() => null),
+        fetch(`${API_URL}/ai/pairings`).catch(() => null)
+      ]);
+
+      if (popularRes?.ok) {
+        const data = await popularRes.json();
+        setPopularItems(data || []);
+      }
+      if (recsRes?.ok) {
+        const data = await recsRes.json();
+        setRecommendations(data || []);
+      }
+      if (pairingsRes?.ok) {
+        const data = await pairingsRes.json();
+        setPairings(data || {});
+      }
+    } catch(e) {
+      console.log('AI features not available:', e);
     }
   };
 
@@ -222,13 +254,13 @@ function KioskApp() {
           body: JSON.stringify({table_id: selectedTable})
         });
         const sessionData = await sessionRes.json();
-        setCurrentSession(sessionData.session);
-        sessionId = sessionData.session.id;
+        setCurrentSession(sessionData);
+        sessionId = sessionData.id;
         
         // Shfaq kodin e sesionit
         alert(
           `✅ Session u hap me porosinë tuaj!\n\n` +
-          `🔐 Kodi i Sesionit: ${sessionData.session.session_code}\n\n` +
+          `🔐 Kodi i Sesionit: ${sessionData.session_code}\n\n` +
           `⚠️ RËNDËSISHME: Ruajeni këtë kod!\n` +
           `Anëtarët e tjerë të grupit mund ta përdorin për të shtuar porosi.`
         );
@@ -253,7 +285,48 @@ function KioskApp() {
       if (!res.ok) throw new Error('Order failed');
 
       const result = await res.json();
-      setToast(`✓ Porosia u dërgua! Total: €${result.total.toFixed(2)}`);
+      
+      // ✅ SHFAQ SESSION CODE
+      const session = currentSession || sessionData;
+      const code = session?.session_code || 'N/A';
+      
+      // ✅ FIX: If code is undefined, fetch session to get it
+      if (!session?.session_code && sessionId) {
+        try {
+          const sessionRes = await fetch(`${API_URL}/sessions/${sessionId}`);
+          const sessionDetails = await sessionRes.json();
+          if (sessionDetails.session_code) {
+            alert(
+              `✅ Porosia u dërgua!\n\n` +
+              `💰 Total: €${result.total.toFixed(2)}\n\n` +
+              `📱 Kodi i sesionit: ${sessionDetails.session_code}\n\n` +
+              `⚠️ MBAJE MEND KËTË KOD!\n` +
+              `Do t'ju nevojitet për të shtuar produkte të tjera.`
+            );
+            setToast(`✓ Porosia u dërgua! Kodi: ${sessionDetails.session_code}`);
+            setCart([]);
+            setIsCartOpen(false);
+            
+            const tablesRes = await fetch(`${API_URL}/tables`);
+            const tablesData = await tablesRes.json();
+            setTables(tablesData);
+            setTimeout(() => setToast(''), 4000);
+            return;
+          }
+        } catch(e) {
+          console.error('Failed to fetch session code:', e);
+        }
+      }
+      
+      alert(
+        `✅ Porosia u dërgua!\n\n` +
+        `💰 Total: €${result.total.toFixed(2)}\n\n` +
+        `📱 Kodi i sesionit: ${code}\n\n` +
+        `⚠️ MBAJE MEND KËTË KOD!\n` +
+        `Do t'ju nevojitet për të shtuar produkte të tjera.`
+      );
+      
+      setToast(`✓ Porosia u dërgua! Kodi: ${code}`);
       setCart([]);
       setIsCartOpen(false);
       
@@ -363,15 +436,35 @@ function KioskApp() {
         )
       ),
 
+      // 🤖 AI RECOMMENDATIONS BANNER
+      recommendations.length > 0 && React.createElement('div', { className: 'ai-recommendations' },
+        React.createElement('h3', null, '💡 Rekomandimet tona'),
+        React.createElement('div', { className: 'recommendations-slider' },
+          recommendations.map(item =>
+            React.createElement('div', {
+              key: item.id,
+              className: 'rec-card',
+              onClick: () => addToCart(item)
+            },
+              React.createElement('div', { className: 'rec-badge' }, '⭐ Rekomanduar'),
+              React.createElement('div', { className: 'rec-name' }, item.name),
+              React.createElement('div', { className: 'rec-price' }, `€${parseFloat(item.price).toFixed(2)}`)
+            )
+          )
+        )
+      ),
+
       React.createElement('div', { className: 'products-grid' },
         filteredProducts.map(product => {
           const category = categories.find(c => c.id === product.category_id);
           const isOutOfStock = !product.in_stock || product.quantity_in_stock <= 0;
+          const isPopular = popularItems.find(p => p.id === product.id);
           
           return React.createElement('div', { 
             key: product.id, 
-            className: `product-card ${isOutOfStock ? 'out-of-stock' : ''}` 
+            className: `product-card ${isOutOfStock ? 'out-of-stock' : ''} ${isPopular ? 'popular-item' : ''}` 
           },
+            isPopular && React.createElement('div', { className: 'popular-badge' }, '🔥 Popular'),
             React.createElement('div', { className: 'product-image' },
               categoryEmojis[category?.name] || '🍴'
             ),
@@ -443,6 +536,34 @@ function KioskApp() {
           )
         )
       ),
+
+      // 🤖 AI SMART SUGGESTIONS
+      cart.length > 0 && (() => {
+        const suggestions = [];
+        cart.forEach(item => {
+          const pairs = pairings[item.id] || [];
+          pairs.forEach(pairId => {
+            const pairItem = products.find(p => p.id === pairId);
+            if (pairItem && !cart.find(c => c.id === pairId) && !suggestions.find(s => s.id === pairId)) {
+              suggestions.push(pairItem);
+            }
+          });
+        });
+        
+        return suggestions.length > 0 && React.createElement('div', { className: 'cart-suggestions' },
+          React.createElement('h4', null, '💡 Customers also bought:'),
+          suggestions.slice(0, 3).map(item =>
+            React.createElement('div', {
+              key: item.id,
+              className: 'suggestion-item',
+              onClick: () => addToCart(item)
+            },
+              React.createElement('span', null, item.name),
+              React.createElement('span', { className: 'suggestion-price' }, `+€${parseFloat(item.price).toFixed(2)}`)
+            )
+          )
+        );
+      })(),
 
       cart.length > 0 && React.createElement('div', { className: 'cart-footer' },
         React.createElement('div', { className: 'cart-total' },
