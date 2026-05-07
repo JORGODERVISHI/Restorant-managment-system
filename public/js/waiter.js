@@ -1,10 +1,203 @@
-// Waiter Panel - ULTIMATE with Shift Management
+// ═══════════════════════════════════════════════════════════
+// WAITER PANEL - ULTIMATE WITH PRINT RECEIPT
+// ═══════════════════════════════════════════════════════════
+
 const { useState, useEffect } = React;
 const API = 'http://localhost:3000';
 const socket = io(API);
 
+// ✨ RECEIPT GENERATOR FUNCTION
+function generateReceiptHTML(session, orders) {
+  const now = new Date();
+  const date = now.toLocaleDateString('sq-AL');
+  const time = now.toLocaleTimeString('sq-AL', { hour: '2-digit', minute: '2-digit' });
+  
+  const subtotal = orders.reduce((sum, order) => {
+    if (order.status === 'CANCELLED') return sum;
+    return sum + parseFloat(order.total_price || 0);
+  }, 0);
+  
+  const tax = subtotal * 0.20;
+  const total = subtotal + tax;
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Faturë - Tavolina ${session.table_number}</title>
+  <style>
+    @media print { @page { margin: 0; } body { margin: 1cm; } }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'Courier New', monospace; 
+      font-size: 12pt; 
+      line-height: 1.4; 
+      max-width: 80mm; 
+      margin: 0 auto; 
+      padding: 10mm; 
+    }
+    .receipt { border: 2px solid #000; padding: 5mm; }
+    .header { 
+      text-align: center; 
+      border-bottom: 2px dashed #000; 
+      padding-bottom: 5mm; 
+      margin-bottom: 5mm; 
+    }
+    .header h1 { font-size: 18pt; font-weight: bold; margin-bottom: 2mm; }
+    .header p { font-size: 10pt; margin: 1mm 0; }
+    .info { margin-bottom: 5mm; font-size: 11pt; }
+    .info-row { 
+      display: flex; 
+      justify-content: space-between; 
+      margin: 1mm 0; 
+    }
+    .items { 
+      border-top: 1px solid #000; 
+      border-bottom: 1px solid #000; 
+      padding: 3mm 0; 
+      margin: 5mm 0; 
+    }
+    .item { 
+      display: flex; 
+      justify-content: space-between; 
+      margin: 2mm 0; 
+      font-size: 10pt;
+    }
+    .item-name { flex: 1; }
+    .item-qty { width: 30mm; text-align: right; }
+    .item-price { width: 25mm; text-align: right; font-weight: bold; }
+    .totals { 
+      margin-top: 5mm; 
+      border-top: 2px solid #000; 
+      padding-top: 3mm; 
+    }
+    .total-row { 
+      display: flex; 
+      justify-content: space-between; 
+      margin: 2mm 0; 
+      font-size: 11pt; 
+    }
+    .total-row.grand { 
+      font-size: 14pt; 
+      font-weight: bold; 
+      border-top: 2px dashed #000; 
+      padding-top: 3mm; 
+      margin-top: 3mm; 
+    }
+    .footer { 
+      text-align: center; 
+      margin-top: 5mm; 
+      padding-top: 5mm; 
+      border-top: 2px dashed #000; 
+      font-size: 10pt; 
+    }
+    @media screen { 
+      body { background: #f5f5f5; padding: 20px; } 
+      .receipt { background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); } 
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="header">
+      <h1>RESTAURANT</h1>
+      <p>Tiranë, Shqipëri</p>
+      <p>Tel: +355 XX XXX XXX</p>
+    </div>
+    
+    <div class="info">
+      <div class="info-row">
+        <span><strong>Tavolina:</strong></span>
+        <span>${session.table_number}</span>
+      </div>
+      <div class="info-row">
+        <span><strong>Data:</strong></span>
+        <span>${date}</span>
+      </div>
+      <div class="info-row">
+        <span><strong>Ora:</strong></span>
+        <span>${time}</span>
+      </div>
+      <div class="info-row">
+        <span><strong>Session:</strong></span>
+        <span>#${session.session_code || session.id}</span>
+      </div>
+    </div>
+    
+    <div class="items">
+      <div class="item" style="font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 2mm; margin-bottom: 3mm;">
+        <div class="item-name">Artikulli</div>
+        <div class="item-qty">Sasia</div>
+        <div class="item-price">Çmimi</div>
+      </div>
+      ${orders.filter(order => order.status !== 'CANCELLED').map(order => 
+        order.items ? order.items.map(item => `
+          <div class="item">
+            <div class="item-name">${item.name || 'Item'}</div>
+            <div class="item-qty">${item.quantity}x €${parseFloat(item.price).toFixed(2)}</div>
+            <div class="item-price">€${(item.quantity * item.price).toFixed(2)}</div>
+          </div>
+        `).join('') : ''
+      ).join('')}
+    </div>
+    
+    <div class="totals">
+      <div class="total-row">
+        <span>Subtotal:</span>
+        <span>€${subtotal.toFixed(2)}</span>
+      </div>
+      <div class="total-row">
+        <span>TVSH (20%):</span>
+        <span>€${tax.toFixed(2)}</span>
+      </div>
+      <div class="total-row grand">
+        <span>TOTAL:</span>
+        <span>€${total.toFixed(2)}</span>
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p><strong>Faleminderit!</strong></p>
+      <p>Ju presim përsëri!</p>
+    </div>
+  </div>
+  
+  <script>
+    window.onload = function() {
+      // Trigger print
+      window.print();
+      
+      // Close window after print (multiple fallbacks)
+      window.onafterprint = function() { 
+        setTimeout(() => window.close(), 100);
+      };
+      
+      // Fallback: close after 2 seconds regardless
+      setTimeout(() => {
+        window.close();
+      }, 2000);
+      
+      // Listen for Esc key to close
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') window.close();
+      });
+    };
+  </script>
+</body>
+</html>`;
+}
+
+// ✨ PRINT RECEIPT FUNCTION
+function printReceipt(session, orders) {
+  const receiptHTML = generateReceiptHTML(session, orders);
+  const printWindow = window.open('', '_blank', 'width=300,height=600');
+  printWindow.document.write(receiptHTML);
+  printWindow.document.close();
+}
+
+// MAIN WAITER PANEL
 function WaiterPanel() {
-  const [view, setView] = useState('active'); // 'active' | 'history' | 'shift'
+  const [view, setView] = useState('active');
   const [sessions, setSessions] = useState([]);
   const [closedSessions, setClosedSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
@@ -73,6 +266,32 @@ function WaiterPanel() {
     }
   };
 
+  const closeAndPrint = async (sessionId) => {
+    // First get session and orders for printing
+    const session = sessions.find(s => s.id === sessionId);
+    try {
+      const res = await fetch(`${API}/sessions/${sessionId}/orders`);
+      const orders = await res.json();
+      
+      // Print first
+      printReceipt(session, orders);
+      
+      // Then close session after 1 second delay
+      setTimeout(async () => {
+        const closeRes = await fetch(`${API}/sessions/${sessionId}/close`, {method: 'POST'});
+        if (closeRes.ok) {
+          alert('Session u mbyll!');
+          setSelectedSession(null);
+          setSessionOrders([]);
+          loadData();
+        }
+      }, 1000);
+    } catch(e) {
+      console.error('Error:', e);
+      alert('Gabim');
+    }
+  };
+
   const totalToday = closedSessions.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
   const totalActive = sessions.reduce((sum, s) => sum + parseFloat(s.current_total || 0), 0);
   const grandTotal = totalToday + totalActive;
@@ -120,7 +339,7 @@ function WaiterPanel() {
               setSelectedSession(sessionId);
               setShowAddItemsModal(true);
             }}
-            onClose={closeSession}
+            onCloseAndPrint={closeAndPrint}
           />
         )}
 
@@ -128,6 +347,17 @@ function WaiterPanel() {
           <HistoryView 
             sessions={closedSessions}
             onViewBill={viewBill}
+            onPrint={async (sessionId) => {
+              // Get session and orders for printing
+              const session = closedSessions.find(s => s.id === sessionId);
+              try {
+                const res = await fetch(`${API}/sessions/${sessionId}/orders`);
+                const orders = await res.json();
+                printReceipt(session, orders);
+              } catch(e) {
+                console.error('Print error:', e);
+              }
+            }}
           />
         )}
 
@@ -145,7 +375,12 @@ function WaiterPanel() {
       {selectedSession && !showAddItemsModal && (
         <BillModal 
           orders={sessionOrders}
+          session={sessions.find(s => s.id === selectedSession) || closedSessions.find(s => s.id === selectedSession)}
           onClose={() => setSelectedSession(null)}
+          onPrint={() => {
+            const session = sessions.find(s => s.id === selectedSession) || closedSessions.find(s => s.id === selectedSession);
+            printReceipt(session, sessionOrders);
+          }}
         />
       )}
 
@@ -177,7 +412,7 @@ function WaiterPanel() {
   );
 }
 
-function ActiveView({ sessions, onViewBill, onAddItems, onClose }) {
+function ActiveView({ sessions, onViewBill, onAddItems, onCloseAndPrint }) {
   if (sessions.length === 0) {
     return (
       <div className="empty-state">
@@ -195,14 +430,14 @@ function ActiveView({ sessions, onViewBill, onAddItems, onClose }) {
           session={s} 
           onViewBill={() => onViewBill(s.id)}
           onAddItems={() => onAddItems(s.id)}
-          onClose={() => onClose(s.id)}
+          onCloseAndPrint={() => onCloseAndPrint(s.id)}
         />
       ))}
     </div>
   );
 }
 
-function HistoryView({ sessions, onViewBill }) {
+function HistoryView({ sessions, onViewBill, onPrint }) {
   if (sessions.length === 0) {
     return (
       <div className="empty-state">
@@ -230,9 +465,25 @@ function HistoryView({ sessions, onViewBill }) {
             <span>•</span>
             <span>{Math.floor((new Date(s.closed_at) - new Date(s.opened_at)) / 60000)} min</span>
           </div>
-          <button className="btn-view-small" onClick={() => onViewBill(s.id)}>
-            Shiko Detajet
-          </button>
+          <div style={{display: 'flex', gap: '0.5rem', marginTop: '0.5rem'}}>
+            <button className="btn-view-small" onClick={() => onViewBill(s.id)}>
+              Shiko Detajet
+            </button>
+            <button 
+              className="btn-print-small" 
+              onClick={() => onPrint(s.id)}
+              style={{
+                background: '#10b981',
+                color: 'white',
+                border: 'none',
+                padding: '0.5rem 1rem',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              🖨️ Print
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -315,8 +566,7 @@ function ShiftView({ activeSessions, closedSessions, totalActive, totalClosed, g
   );
 }
 
-// SessionCard, BillModal, NewOrderModal, AddItemsModal remain same as before...
-function SessionCard({ session, onViewBill, onAddItems, onClose }) {
+function SessionCard({ session, onViewBill, onAddItems, onCloseAndPrint }) {
   const duration = Math.floor((new Date() - new Date(session.opened_at)) / 60000);
   
   return (
@@ -340,14 +590,27 @@ function SessionCard({ session, onViewBill, onAddItems, onClose }) {
       <div className="session-actions">
         <button className="btn btn-view" onClick={onViewBill}>Fatura</button>
         <button className="btn btn-add" onClick={onAddItems}>+ Shto</button>
-        <button className="btn btn-close" onClick={onClose}>Mbyll</button>
+        <button 
+          className="btn btn-close-print" 
+          onClick={onCloseAndPrint}
+          style={{
+            background: '#10b981',
+            color: 'white',
+            flex: 1
+          }}
+        >
+          🖨️ Mbyll & Print
+        </button>
       </div>
     </div>
   );
 }
 
-function BillModal({ orders, onClose }) {
-  const total = orders.reduce((sum, o) => sum + parseFloat(o.total_price || 0), 0);
+function BillModal({ orders, session, onClose, onPrint }) {
+  const total = orders.reduce((sum, o) => {
+    if (o.status === 'CANCELLED') return sum;
+    return sum + parseFloat(o.total_price || 0);
+  }, 0);
   
   const cancelOrder = async (orderId) => {
     if (!confirm('Anulo porosinë? Stoku do të rikthehet.')) return;
@@ -372,7 +635,7 @@ function BillModal({ orders, onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Fatura</h2>
+          <h2>Fatura - Tavolina {session?.table_number}</h2>
           <button className="btn-close-modal" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
@@ -411,6 +674,22 @@ function BillModal({ orders, onClose }) {
             <span className="total-label">TOTAL:</span>
             <span className="total-amount">€{total.toFixed(2)}</span>
           </div>
+          <button 
+            className="btn btn-print-modal" 
+            onClick={onPrint}
+            style={{
+              background: '#10b981',
+              color: 'white',
+              padding: '0.75rem 1.5rem',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              marginTop: '1rem',
+              width: '100%'
+            }}
+          >
+            🖨️ Print Receipt
+          </button>
         </div>
       </div>
     </div>
