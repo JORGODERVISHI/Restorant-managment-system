@@ -140,12 +140,18 @@
     .error.show {
       display: block;
     }
+
+    .optional {
+      color: #9ca3af;
+      font-weight: 400;
+      font-size: 0.75rem;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="logo">
-      <h1>🍽️ Restaurant XYZ</h1>
+      <h1>Restaurant_JORGO</h1>
       <p>Rezervo tavolinën tënde</p>
     </div>
     
@@ -165,6 +171,11 @@
       <div class="form-group">
         <label>👤 Emri</label>
         <input type="text" id="name" placeholder="Emri juaj" required>
+      </div>
+      
+      <div class="form-group">
+        <label>📧 Email <span class="optional">(për konfirmim)</span></label>
+        <input type="email" id="email" placeholder="email@example.com">
       </div>
       
       <div class="form-group">
@@ -195,26 +206,29 @@
       </div>
       
       <button type="submit" class="btn-submit">
-        📅 Rezervo Tani
+        📧 Rezervo Tani
       </button>
     </form>
     
     <div class="success-message" id="success">
       <h2>✅ Rezervimi u Konfirmua!</h2>
       <div class="code-display" id="codeDisplay"></div>
-      <p><strong>Kodi juaj u dërgua në SMS!</strong></p>
-      <p style="margin-top: 1rem; font-size: 0.875rem;">
+      <p id="emailSentMessage"></p>
+      <p style="margin-top: 1rem; font-size: 0.875rem;" id="detailsMessage">
         Përdorni këtë kod në kiosk kur të vini në restorant.
       </p>
     </div>
   </div>
 
   <script>
+    const API = window.location.port === '5501' ? 'http://localhost:3000' : '';
+    
     const form = document.getElementById('reservationForm');
     const successDiv = document.getElementById('success');
     const errorDiv = document.getElementById('error');
     const codeDisplay = document.getElementById('codeDisplay');
     const tableSelect = document.getElementById('table');
+    const emailSentMessage = document.getElementById('emailSentMessage');
     
     // Set minimum date to today
     const today = new Date().toISOString().split('T')[0];
@@ -227,7 +241,7 @@
     // Load available tables
     async function loadTables() {
       try {
-        const res = await fetch('http://localhost:3000/tables');
+        const res = await fetch(`${API}/tables`);
         const tables = await res.json();
         
         // Show only FREE tables
@@ -245,6 +259,9 @@
           option.textContent = `Tavolina ${table.table_number}`;
           tableSelect.appendChild(option);
         });
+
+        // Store tables globally for later use
+        window.tablesData = tables;
       } catch (err) {
         console.error('Error loading tables:', err);
       }
@@ -256,9 +273,12 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       
+      const email = document.getElementById('email').value.trim();
+      
       const data = {
         customer_name: document.getElementById('name').value,
         customer_phone: document.getElementById('phone').value,
+        customer_email: email || undefined, // ✨ EMAIL SHTUAR!
         reservation_date: document.getElementById('date').value,
         reservation_time: document.getElementById('time').value + ':00',
         party_size: parseInt(document.getElementById('partySize').value),
@@ -266,7 +286,7 @@
       };
       
       try {
-        const res = await fetch('http://localhost:3000/reservations', {
+        const res = await fetch(`${API}/reservations`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(data)
@@ -281,9 +301,16 @@
         successDiv.classList.add('show');
         codeDisplay.textContent = result.reservation.reservation_code;
         
+        // Update message based on email
+        if (email) {
+          emailSentMessage.innerHTML = `<strong>📧 Kodi u dërgua në email: ${email}</strong>`;
+        } else {
+          emailSentMessage.innerHTML = `<strong>Ruajeni këtë kod!</strong>`;
+        }
+        
         // Update success message with table info
-        const tableNumber = tables.find(t => t.id === data.table_id)?.table_number || data.table_id;
-        document.querySelector('#success p:last-child').innerHTML = 
+        const tableNumber = window.tablesData?.find(t => t.id === data.table_id)?.table_number || data.table_id;
+        document.getElementById('detailsMessage').innerHTML = 
           `Tavolina: <strong>${tableNumber}</strong><br>` +
           `Përdorni kodin në kiosk kur të vini.`;
         
