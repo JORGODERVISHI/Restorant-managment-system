@@ -35,7 +35,7 @@ function KioskApp() {
   const [error, setError] = useState(null);
   const [toast, setToast] = useState('');
   
-  // 🤖 AI-powered recommendations
+  // AI-powered recommendations
   const [popularItems, setPopularItems] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
   const [pairings, setPairings] = useState({});
@@ -286,11 +286,11 @@ function KioskApp() {
 
       const result = await res.json();
       
-      // ✅ SHFAQ SESSION CODE
+      //  SHFAQ SESSION CODE
       const session = currentSession || sessionData;
       const code = session?.session_code || 'N/A';
       
-      // ✅ FIX: If code is undefined, fetch session to get it
+      //  FIX: If code is undefined, fetch session to get it
       if (!session?.session_code && sessionId) {
         try {
           const sessionRes = await fetch(`${API_URL}/sessions/${sessionId}`);
@@ -386,7 +386,7 @@ function KioskApp() {
               cursor: 'pointer',
               boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
             }
-          }, '📅 Kam Rezervim')
+          }, ' Kam Rezervim')
         ),
         
         React.createElement('div', { className: 'table-grid' },
@@ -436,7 +436,7 @@ function KioskApp() {
         )
       ),
 
-      // 🤖 AI RECOMMENDATIONS BANNER
+      //  AI RECOMMENDATIONS BANNER
       recommendations.length > 0 && React.createElement('div', { className: 'ai-recommendations' },
         React.createElement('h3', null, '💡 Rekomandimet tona'),
         React.createElement('div', { className: 'recommendations-slider' },
@@ -537,7 +537,7 @@ function KioskApp() {
         )
       ),
 
-      // 🤖 AI SMART SUGGESTIONS
+      // AI SMART SUGGESTIONS
       cart.length > 0 && (() => {
         const suggestions = [];
         cart.forEach(item => {

@@ -32,6 +32,7 @@ function AdminPanel() {
           {view === 'inventory' && <Inventory />}
           {view === 'menu' && <MenuManagement />}
           {view === 'reports' && <Reports />}
+    
           {view === 'settings' && <Settings />}
         </div>
       </div>
@@ -56,6 +57,7 @@ function Sidebar({ current, onNavigate }) {
     { id: 'inventory', label: 'Inventory' },
     { id: 'menu', label: 'Menu' },
     { id: 'reports', label: 'Reports' },
+   
     { id: 'settings', label: 'Settings' }
   ];
 
@@ -555,51 +557,203 @@ function CategoryModal({ category, onClose, onSave }) {
 // ═══════════════════════════════════════════════════════════
 
 function Reports() {
+  const [reportType, setReportType] = useState('daily');
   const [period, setPeriod] = useState('today');
-  const [data, setData] = useState({ daily: null, top: [], category: [] });
+  const [data, setData] = useState({ 
+    daily: null, 
+    weekly: null,
+    monthly: null,
+    yearly: null,
+    top: [], 
+    category: []
+  });
   const [loading, setLoading] = useState(true);
-
+ 
+  const [weekRange, setWeekRange] = useState({
+    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0]
+  });
+  const [monthYear, setMonthYear] = useState({
+    month: new Date().getMonth() + 1,
+    year: new Date().getFullYear()
+  });
+ 
   useEffect(() => {
     loadReports();
-  }, [period]);
-
+  }, [reportType, period, weekRange, monthYear]);
+ 
   const loadReports = async () => {
     try {
       setLoading(true);
-      const [daily, top, category] = await Promise.all([
-        fetch(`${API}/admin/reports/daily?date=${new Date().toISOString().split('T')[0]}`).then(r => r.json()),
-        fetch(`${API}/admin/reports/top-products?period=${period}&limit=10`).then(r => r.json()),
-        fetch(`${API}/admin/reports/sales-by-category?period=${period}`).then(r => r.json())
-      ]);
-      setData({ daily, top, category });
+      
+      if (reportType === 'daily') {
+        const [daily, top, category] = await Promise.all([
+          fetch(`${API}/admin/reports/daily?date=${new Date().toISOString().split('T')[0]}`).then(r => r.json()),
+          fetch(`${API}/admin/reports/top-products?period=${period}&limit=10`).then(r => r.json()),
+          fetch(`${API}/admin/reports/sales-by-category?period=${period}`).then(r => r.json())
+        ]);
+        setData({ daily, top, category, weekly: null, monthly: null, yearly: null });
+      } else if (reportType === 'weekly') {
+        const [weekly, top, category] = await Promise.all([
+          fetch(`${API}/admin/reports/weekly?startDate=${weekRange.start}&endDate=${weekRange.end}`).then(r => r.json()),
+          fetch(`${API}/admin/reports/top-products?period=week&limit=10`).then(r => r.json()),
+          fetch(`${API}/admin/reports/sales-by-category?period=week`).then(r => r.json())
+        ]);
+        setData({ weekly, top, category, daily: null, monthly: null, yearly: null });
+      } else if (reportType === 'monthly') {
+        const [monthly, category] = await Promise.all([
+          fetch(`${API}/admin/reports/monthly?month=${monthYear.month}&year=${monthYear.year}`).then(r => r.json()),
+          fetch(`${API}/admin/reports/sales-by-category?period=month`).then(r => r.json())
+        ]);
+        setData({ monthly, top: monthly.top_products || [], category, daily: null, weekly: null, yearly: null });
+      } else if (reportType === 'yearly') {
+        const [yearly, top, category] = await Promise.all([
+          fetch(`${API}/admin/reports/yearly?year=${monthYear.year}`).then(r => r.json()),
+          fetch(`${API}/admin/reports/top-products?period=month&limit=10`).then(r => r.json()),
+          fetch(`${API}/admin/reports/sales-by-category?period=month`).then(r => r.json())
+        ]);
+        setData({ yearly, top, category, daily: null, weekly: null, monthly: null });
+      }
+      
       setLoading(false);
     } catch(e) {
-      console.error(e);
+      console.error('Report loading error:', e);
       setLoading(false);
     }
   };
-
-  if (loading) return <div className="loading">Loading...</div>;
-
+ 
+  if (loading) return <div className="loading">Loading reports...</div>;
+ 
+  const getTotals = () => {
+    if (reportType === 'daily' && data.daily) {
+      return {
+        sales: data.daily.total_sales || 0,
+        orders: data.daily.total_orders || 0,
+        sessions: data.daily.total_sessions || 0
+      };
+    } else if (reportType === 'weekly' && data.weekly) {
+      return {
+        sales: data.weekly.totals?.total_revenue || 0,
+        orders: data.weekly.totals?.total_orders || 0,
+        sessions: data.weekly.totals?.total_sessions || 0
+      };
+    } else if (reportType === 'monthly' && data.monthly) {
+      return {
+        sales: data.monthly.totals?.total_revenue || 0,
+        orders: data.monthly.totals?.total_orders || 0,
+        sessions: data.monthly.totals?.total_sessions || 0
+      };
+    } else if (reportType === 'yearly' && data.yearly) {
+      return {
+        sales: data.yearly.totals?.total_revenue || 0,
+        orders: data.yearly.totals?.total_orders || 0,
+        sessions: data.yearly.totals?.total_sessions || 0
+      };
+    }
+    return { sales: 0, orders: 0, sessions: 0 };
+  };
+ 
+  const totals = getTotals();
+ 
   return (
     <div className="reports">
       <div className="section-header">
-        <h3>Reports</h3>
-        <select value={period} onChange={e => setPeriod(e.target.value)} className="period-select">
-          <option value="today">Today</option>
-          <option value="week">This Week</option>
-          <option value="month">This Month</option>
-        </select>
-      </div>
-
-      {data.daily && (
-        <div className="stats-grid">
-          <StatCard title="Total Sales" value={`€${parseFloat(data.daily.total_sales || 0).toFixed(2)}`} />
-          <StatCard title="Total Orders" value={data.daily.total_orders || 0} />
-          <StatCard title="Sessions" value={data.daily.total_sessions || 0} />
+        <h3>Reports & Analytics</h3>
+        <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+          <select value={reportType} onChange={e => setReportType(e.target.value)} className="period-select">
+            <option value="daily">Daily Report</option>
+            <option value="weekly">Weekly Report</option>
+            <option value="monthly">Monthly Report</option>
+            <option value="yearly">Yearly Report</option>
+          </select>
+ 
+          {reportType === 'daily' && (
+            <select value={period} onChange={e => setPeriod(e.target.value)} className="period-select">
+              <option value="today">Today</option>
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+            </select>
+          )}
+ 
+          {reportType === 'weekly' && (
+            <>
+              <input 
+                type="date" 
+                value={weekRange.start} 
+                onChange={e => setWeekRange({...weekRange, start: e.target.value})}
+                style={{padding: '8px', border: '1px solid #ddd', borderRadius: '6px'}}
+              />
+              <span>to</span>
+              <input 
+                type="date" 
+                value={weekRange.end} 
+                onChange={e => setWeekRange({...weekRange, end: e.target.value})}
+                style={{padding: '8px', border: '1px solid #ddd', borderRadius: '6px'}}
+              />
+            </>
+          )}
+ 
+          {(reportType === 'monthly' || reportType === 'yearly') && (
+            <>
+              {reportType === 'monthly' && (
+                <select 
+                  value={monthYear.month} 
+                  onChange={e => setMonthYear({...monthYear, month: parseInt(e.target.value)})}
+                  className="period-select">
+                  <option value="1">January</option>
+                  <option value="2">February</option>
+                  <option value="3">March</option>
+                  <option value="4">April</option>
+                  <option value="5">May</option>
+                  <option value="6">June</option>
+                  <option value="7">July</option>
+                  <option value="8">August</option>
+                  <option value="9">September</option>
+                  <option value="10">October</option>
+                  <option value="11">November</option>
+                  <option value="12">December</option>
+                </select>
+              )}
+              <input 
+                type="number" 
+                value={monthYear.year} 
+                onChange={e => setMonthYear({...monthYear, year: parseInt(e.target.value)})}
+                min="2020"
+                max="2030"
+                style={{padding: '8px', border: '1px solid #ddd', borderRadius: '6px', width: '100px'}}
+              />
+            </>
+          )}
         </div>
-      )}
-
+      </div>
+ 
+      <div className="stats-grid">
+        <StatCard 
+          title={`Total Sales (${reportType})`} 
+          value={`€${parseFloat(totals.sales).toFixed(2)}`} 
+        />
+        <StatCard 
+          title={`Total Orders (${reportType})`} 
+          value={totals.orders} 
+        />
+        <StatCard 
+          title={`Sessions (${reportType})`} 
+          value={totals.sessions} 
+        />
+        {reportType === 'monthly' && data.monthly && (
+          <StatCard 
+            title="Days Active" 
+            value={data.monthly.totals?.days_active || 0} 
+          />
+        )}
+        {reportType === 'yearly' && data.yearly && (
+          <StatCard 
+            title="Months Active" 
+            value={data.yearly.totals?.months_active || 0} 
+          />
+        )}
+      </div>
+ 
       <div className="reports-grid">
         <div className="report-card">
           <h4>Top Products</h4>
@@ -619,16 +773,16 @@ function Reports() {
                 data.top.map((p, i) => (
                   <tr key={i}>
                     <td>{p.name}</td>
-                    <td>{p.category}</td>
+                    <td>{p.category || 'N/A'}</td>
                     <td>{p.total_sold}</td>
-                    <td>€{parseFloat(p.total_revenue).toFixed(2)}</td>
+                    <td>€{parseFloat(p.total_revenue || p.revenue || 0).toFixed(2)}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
-
+ 
         <div className="report-card">
           <h4>Sales by Category</h4>
           <table className="data-table">
@@ -657,9 +811,95 @@ function Reports() {
           </table>
         </div>
       </div>
+ 
+      {reportType === 'weekly' && data.weekly && data.weekly.daily_breakdown && (
+        <div className="report-card" style={{marginTop: '20px'}}>
+          <h4>Daily Breakdown ({weekRange.start} to {weekRange.end})</h4>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Orders</th>
+                <th>Sessions</th>
+                <th>Revenue</th>
+                <th>Avg Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.weekly.daily_breakdown.map((day, i) => (
+                <tr key={i}>
+                  <td>{new Date(day.date).toLocaleDateString('sq-AL')}</td>
+                  <td>{day.total_orders}</td>
+                  <td>{day.total_sessions}</td>
+                  <td>€{parseFloat(day.total_revenue || 0).toFixed(2)}</td>
+                  <td>€{parseFloat(day.avg_order_value || 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+ 
+      {reportType === 'monthly' && data.monthly && data.monthly.daily_breakdown && (
+        <div className="report-card" style={{marginTop: '20px'}}>
+          <h4>Daily Breakdown (Month {monthYear.month}/{monthYear.year})</h4>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Orders</th>
+                <th>Sessions</th>
+                <th>Revenue</th>
+                <th>Avg Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.monthly.daily_breakdown.map((day, i) => (
+                <tr key={i}>
+                  <td>{new Date(day.date).toLocaleDateString('sq-AL')}</td>
+                  <td>{day.total_orders}</td>
+                  <td>{day.total_sessions}</td>
+                  <td>€{parseFloat(day.total_revenue || 0).toFixed(2)}</td>
+                  <td>€{parseFloat(day.avg_order_value || 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+ 
+      {reportType === 'yearly' && data.yearly && data.yearly.monthly_breakdown && (
+        <div className="report-card" style={{marginTop: '20px'}}>
+          <h4>Monthly Breakdown (Year {monthYear.year})</h4>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Orders</th>
+                <th>Sessions</th>
+                <th>Revenue</th>
+                <th>Avg Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.yearly.monthly_breakdown.map((month, i) => (
+                <tr key={i}>
+                  <td>{month.month_name}</td>
+                  <td>{month.total_orders}</td>
+                  <td>{month.total_sessions}</td>
+                  <td>€{parseFloat(month.total_revenue || 0).toFixed(2)}</td>
+                  <td>€{parseFloat(month.avg_order_value || 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
+
+
 
 // ═══════════════════════════════════════════════════════════
 // SETTINGS
@@ -677,48 +917,201 @@ function Settings() {
         <button className={tab === 'tables' ? 'active' : ''} onClick={() => setTab('tables')}>
           Table Management
         </button>
+        <button className={tab === 'qrcode' ? 'active' : ''} onClick={() => setTab('qrcode')}>
+          QR Code
+        </button>
         <button className={tab === 'system' ? 'active' : ''} onClick={() => setTab('system')}>
           System Settings
         </button>
       </div>
       {tab === 'users' && <UserManagement />}
       {tab === 'tables' && <TableManagement />}
+      {tab === 'qrcode' && <QRCodeManagement />}
       {tab === 'system' && <SystemSettings />}
     </div>
   );
 }
 
 function UserManagement() {
-  const [users, setUsers] = useState([
-    { id: 1, name: 'Admin User', username: 'admin', role: 'admin' },
-    { id: 2, name: 'Waiter 1', username: 'waiter1', role: 'waiter' }
-  ]);
-  const [showModal, setShowModal] = useState(false);
-  const [editUser, setEditUser] = useState(null);
+  const [users, setUsers] = React.useState([]);
+  const [showModal, setShowModal] = React.useState(false);
+  const [editUser, setEditUser] = React.useState(null);
+  const [formData, setFormData] = React.useState({
+    name: '',
+    username: '',
+    password: '',
+    role: 'waiter'
+  });
 
-  const handleSave = (data) => {
-    if (editUser) {
-      setUsers(users.map(u => u.id === editUser.id ? {...u, ...data} : u));
-    } else {
-      setUsers([...users, {...data, id: Math.max(...users.map(u => u.id)) + 1}]);
+  // Load users from database
+  React.useEffect(() => {
+    loadUsers();
+  }, []);
+
+ const loadUsers = async () => {
+  try {
+    const token = sessionStorage.getItem('token');
+    console.log('Token:', token);
+    
+    const response = await fetch('http://localhost:3000/admin/users', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      console.error('Load users failed:', response.status);
+      setUsers([]);
+      return;
     }
-    setShowModal(false);
+
+    const data = await response.json();
+    setUsers(data || []);
+  } catch (err) {
+    console.error('Load users error:', err);
+    setUsers([]);
+  }
+};
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleDelete = (id) => {
-    if (!confirm('Delete?')) return;
-    setUsers(users.filter(u => u.id !== id));
+  const handleSave = async () => {
+    try {
+      if (!formData.username || !formData.password) {
+        alert('Username and password required!');
+        return;
+      }
+
+      const response = await fetch('http://localhost:3000/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(formData)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert('Error: ' + (data.error || 'Failed to create user'));
+        return;
+      }
+
+      alert('✅ User created!');
+      setFormData({ name: '', username: '', password: '', role: 'waiter' });
+      setShowModal(false);
+      loadUsers();
+
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this user?')) return;
+
+    try {
+      const response = await fetch(`http://localhost:3000/admin/users/${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        alert('Error deleting user');
+        return;
+      }
+
+      alert('✅ User deleted');
+      loadUsers();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
   };
 
   return (
     <div className="user-management">
       <div className="section-header">
         <h3>Users</h3>
-        <button className="btn-primary" onClick={() => {setEditUser(null); setShowModal(true);}}>
-          Add User
+        <button className="btn-primary" onClick={() => {
+          setEditUser(null);
+          setFormData({ name: '', username: '', password: '', role: 'waiter' });
+          setShowModal(true);
+        }}>
+          ➕ Add User
         </button>
       </div>
 
+      {/* MODAL */}
+      {showModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: 'white', padding: '30px', borderRadius: '10px',
+            width: '100%', maxWidth: '500px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0 }}>Add User</h2>
+              <button onClick={() => setShowModal(false)}
+                style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Name</label>
+              <input type="text" name="name" value={formData.name}
+                onChange={handleInputChange} placeholder="Full name"
+                style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Username</label>
+              <input type="text" name="username" value={formData.username}
+                onChange={handleInputChange} placeholder="Username"
+                style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Password</label>
+              <input type="password" name="password" value={formData.password}
+                onChange={handleInputChange} placeholder="Password"
+                style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Role</label>
+              <select name="role" value={formData.role} onChange={handleInputChange}
+                style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', boxSizing: 'border-box' }}>
+                <option value="waiter">Waiter</option>
+                <option value="admin">Admin</option>
+                <option value="kitchen">Kitchen</option>
+                <option value="bar">Bar</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowModal(false)}
+                style={{ padding: '10px 20px', backgroundColor: '#e0e0e0', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={handleSave}
+                style={{ padding: '10px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                Save User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* USERS TABLE */}
       <table className="data-table">
         <thead>
           <tr>
@@ -729,27 +1122,33 @@ function UserManagement() {
           </tr>
         </thead>
         <tbody>
-          {users.map(u => (
-            <tr key={u.id}>
-              <td>{u.name}</td>
-              <td>{u.username}</td>
-              <td><span className={`badge ${u.role}`}>{u.role}</span></td>
+          {users.map(user => (
+            <tr key={user.id}>
+              <td>{user.name || '-'}</td>
+              <td>{user.username}</td>
               <td>
-                <button className="btn-sm" onClick={() => {setEditUser(u); setShowModal(true);}}>Edit</button>
-                <button className="btn-sm btn-danger" onClick={() => handleDelete(u.id)}>Delete</button>
+                <span className="role-badge" style={{
+                  display: 'inline-block',
+                  padding: '4px 12px',
+                  backgroundColor: user.role === 'admin' ? '#8b5cf6' : '#3b82f6',
+                  color: 'white', borderRadius: '12px', fontSize: '12px',
+                  fontWeight: 'bold', textTransform: 'uppercase'
+                }}>
+                  {user.role}
+                </span>
+              </td>
+              <td>
+                <button onClick={() => alert('Edit not implemented')} className="btn-small" style={{ marginRight: '5px' }}>
+                  Edit
+                </button>
+                <button onClick={() => handleDelete(user.id)} className="btn-danger btn-small">
+                  Delete
+                </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-
-      {showModal && (
-        <UserModal 
-          user={editUser}
-          onClose={() => setShowModal(false)}
-          onSave={handleSave}
-        />
-      )}
     </div>
   );
 }
@@ -1004,5 +1403,141 @@ function SystemSettings() {
     </div>
   );
 }
+
+function QRCodeManagement() {
+  const orderUrl = `${window.location.origin}/public/kiosk.html`;
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(orderUrl)}`;
+
+  const printQR = () => {
+    window.print();
+  };
+
+  return (
+    <div className="qr-code-management">
+      <div className="section-header">
+        <h3>Restaurant QR Code</h3>
+        <button className="btn-primary" onClick={printQR}>
+          Print QR Code
+        </button>
+      </div>
+
+      <div className="qr-info-box" style={{
+        background: '#f0f9ff',
+        border: '1px solid #0284c7',
+        borderRadius: '8px',
+        padding: '20px',
+        marginBottom: '30px'
+      }}>
+        <h4 style={{margin: '0 0 15px 0', color: '#0284c7'}}>How it works:</h4>
+        <ol style={{margin: 0, paddingLeft: '20px', lineHeight: '1.8'}}>
+          <li><strong>Print this QR code</strong> - Click Print QR Code button above</li>
+          <li><strong>Place it anywhere</strong> - At entrance, on walls, on menus, on tables</li>
+          <li><strong>Customers scan</strong> - Opens order page on their phone</li>
+          <li><strong>Select table</strong> - Customer chooses their table number from dropdown</li>
+          <li><strong>Order and submit</strong> - Order goes directly to Kitchen Bar</li>
+        </ol>
+      </div>
+
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        marginBottom: '30px'
+      }}>
+        <div 
+          className="qr-card-single"
+          style={{
+            border: '3px solid #0284c7',
+            borderRadius: '16px',
+            padding: '40px',
+            textAlign: 'center',
+            background: 'white',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            maxWidth: '500px'
+          }}
+        >
+          <h2 style={{
+            margin: '0 0 20px 0', 
+            fontSize: '32px',
+            color: '#1f2937'
+          }}>
+            Order Here
+          </h2>
+          
+          <div style={{
+            background: '#f9fafb',
+            padding: '30px',
+            borderRadius: '12px',
+            marginBottom: '20px'
+          }}>
+            <img 
+              src={qrCodeUrl}
+              alt="Restaurant Order QR Code"
+              style={{
+                width: '100%',
+                maxWidth: '400px',
+                height: 'auto',
+                display: 'block',
+                margin: '0 auto'
+              }}
+            />
+          </div>
+
+          <div style={{
+            fontSize: '18px',
+            color: '#6b7280',
+            marginBottom: '20px',
+            fontWeight: '500'
+          }}>
+            Scan to order from your table
+          </div>
+
+          <div style={{
+            fontSize: '14px',
+            color: '#9ca3af',
+            fontFamily: 'monospace',
+            wordBreak: 'break-all',
+            padding: '10px',
+            background: '#f3f4f6',
+            borderRadius: '6px'
+          }}>
+            {orderUrl}
+          </div>
+
+          <div style={{marginTop: '20px'}}>
+            <a 
+              href={qrCodeUrl}
+              download="restaurant-order-qr.png"
+              className="btn-success"
+              style={{
+                display: 'inline-block',
+                padding: '12px 24px',
+                textDecoration: 'none'
+              }}
+            >
+              Download QR Code
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div style={{
+        background: '#fef3c7',
+        border: '1px solid #f59e0b',
+        borderRadius: '8px',
+        padding: '20px',
+        marginTop: '30px'
+      }}>
+        <h4 style={{margin: '0 0 10px 0', color: '#f59e0b'}}>Printing Tips:</h4>
+        <ul style={{margin: 0, paddingLeft: '20px'}}>
+          <li>Print on <strong>A4 paper</strong> or cardstock for durability</li>
+          <li><strong>Laminate</strong> the QR code to protect it from spills</li>
+          <li>Place in <strong>visible locations</strong>: entrance, tables, menu cards</li>
+          <li>Test scan before placing to ensure it works</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 
 ReactDOM.render(<AdminPanel />, document.getElementById('root'));

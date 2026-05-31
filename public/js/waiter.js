@@ -6,7 +6,7 @@ const { useState, useEffect } = React;
 const API = 'http://localhost:3000';
 const socket = io(API);
 
-// ✨ RECEIPT GENERATOR FUNCTION
+// RECEIPT GENERATOR FUNCTION
 function generateReceiptHTML(session, orders) {
   const now = new Date();
   const date = now.toLocaleDateString('sq-AL');
@@ -301,7 +301,7 @@ function WaiterPanel() {
   return (
     <>
       <header className="header">
-        <h1>👨‍🍳 Waiter Panel</h1>
+        <h1>Waiter Panel</h1>
         <div className="header-actions">
           <button className="btn-new-order" onClick={() => setShowNewOrderModal(true)}>
             + Porosi e Re
@@ -453,7 +453,7 @@ function HistoryView({ sessions, onViewBill, onPrint }) {
         <div key={s.id} className="history-item">
           <div className="history-header">
             <div>
-              <h3>🏓 Tavolina {s.table_number}</h3>
+              <h3>Tavolina {s.table_number}</h3>
               <span className="history-time">
                 {new Date(s.opened_at).toLocaleTimeString()} - {new Date(s.closed_at).toLocaleTimeString()}
               </span>
@@ -498,7 +498,7 @@ function ShiftView({ activeSessions, closedSessions, totalActive, totalClosed, g
   return (
     <div className="shift-summary">
       <div className="shift-header">
-        <h2>📊 Përmbledhje e Turnit</h2>
+        <h2>Përmbledhje e Turnit</h2>
         <button className="btn-print" onClick={printShift}>🖨️ Print</button>
       </div>
 
@@ -572,7 +572,7 @@ function SessionCard({ session, onViewBill, onAddItems, onCloseAndPrint }) {
   return (
     <div className="session-card">
       <div className="session-header">
-        <h3>🏓 Tavolina {session.table_number}</h3>
+        <h3>Tavolina {session.table_number}</h3>
         <span className="session-badge">{session.order_count} porosi</span>
       </div>
       

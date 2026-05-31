@@ -4,17 +4,65 @@ const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const nodemailer = require("nodemailer");
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+
+app.use(session({
+  secret: 'your-secret-key-change-this-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+  secure: false,
+  maxAge: 24 * 60 * 60 * 1000,
+  sameSite: 'lax'
+}
+}));
+
+// ═══════════════════════════════════════════════════════════
+// AUTHENTICATION MIDDLEWARE
+// ═══════════════════════════════════════════════════════════
+
+const requireAuth = (req, res, next) => {
+  if (req.session && req.session.user) {
+    next();
+  } else {
+    res.status(401).json({ error: 'Authentication required' });
+  }
+};
+
+const requireRole = (...roles) => {
+  return (req, res, next) => {
+    if (!req.session || !req.session.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    if (!roles.includes(req.session.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    next();
+  };
+};
 
 // 📧 EMAIL CONFIGURATION
 const emailTransporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: 'jorgosdervishi@gmail.com',        // ← Your Gmail!
-    pass: 'PASTE-APP-PASSWORD-HERE'          // ← Get from Google App Passwords
+    user: 'jorgosdervishi@gmail.com',
+    pass: 'PASTE-APP-PASSWORD-HERE'
   }
 });
 
@@ -114,6 +162,68 @@ app.get("/", (req, res) => {
   res.send("Backend running with realtime 🚀");
 });
 
+// ═══════════════════════════════════════════════════════════
+// LOGIN ENDPOINTS
+// ═══════════════════════════════════════════════════════════
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    const result = await pool.query(
+      'SELECT id, username, password, role, name FROM users WHERE username = $1',
+      [username]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const user = result.rows[0];
+
+    if (password !== user.password) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    req.session.user = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      name: user.name
+    };
+
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        name: user.name
+      },
+      token: req.sessionID
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    res.json({ message: 'Logged out successfully' });
+  });
+});
+
+app.get('/auth/me', requireAuth, (req, res) => {
+  res.json({ user: req.session.user });
+});
 
 // 📂 GET CATEGORIES
 app.get("/categories", async (req, res) => {
@@ -200,7 +310,7 @@ app.post("/sessions/open", async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
-      return res.json(existing.rows[0]); // ✅ RETURN DIRECT OBJECT
+      return res.json(existing.rows[0]);
     }
 
     // Create new session
@@ -216,7 +326,7 @@ app.post("/sessions/open", async (req, res) => {
     await pool.query("UPDATE tables SET status = 'occupied' WHERE id = $1", [table_id]);
 
     console.log(`✅ Session opened - Table ${table_id}, Code: ${sessionCode}`);
-    res.json(result.rows[0]); // ✅ RETURN DIRECT OBJECT (not wrapped in {session: ...})
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -495,6 +605,7 @@ for (let item of items) {
   }
   console.log("TYPE:", type, "NAME:", name);
 }
+console.log("FOOD ITEMS:", foodItems);
 console.log("DRINK ITEMS:", drinkItems);
 
     // 3. update total
@@ -870,7 +981,6 @@ app.get("/dashboard/stats", async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     
-    // ✅ FIX: Use proper queries with error handling
     const salesRes = await pool.query(
       `SELECT COALESCE(SUM(total_amount), 0) as total 
        FROM table_sessions 
@@ -878,7 +988,6 @@ app.get("/dashboard/stats", async (req, res) => {
       [today]
     );
     
-    // ✅ FIX: Count only ACTIVE orders from ACTIVE sessions
     const ordersRes = await pool.query(
       `SELECT COUNT(*) as count 
        FROM orders o
@@ -887,14 +996,12 @@ app.get("/dashboard/stats", async (req, res) => {
        AND o.status NOT IN ('COMPLETED', 'CANCELLED')`
     );
     
-    // ✅ FIX: Use inventory table directly
     const lowStockRes = await pool.query(
       `SELECT COUNT(*) as count 
        FROM inventory 
        WHERE quantity_in_stock <= minimum_stock`
     );
     
-    // ✅ Active sessions (to match Waiter panel)
     const sessionsRes = await pool.query(
       `SELECT COUNT(*) as count 
        FROM table_sessions 
@@ -918,7 +1025,7 @@ app.get("/dashboard/stats", async (req, res) => {
     res.json({
       total_sales: parseFloat(salesRes.rows[0].total),
       active_orders: parseInt(ordersRes.rows[0].count),
-      active_sessions: parseInt(sessionsRes.rows[0].count), // ✅ NEW - matches Waiter!
+      active_sessions: parseInt(sessionsRes.rows[0].count),
       low_stock_count: parseInt(lowStockRes.rows[0].count),
       top_products: topProductsRes.rows
     });
@@ -1031,8 +1138,350 @@ app.get("/admin/reports/sales-by-category", async (req, res) => {
   }
 });
 
+// 📊 WEEKLY REPORT
+app.get('/admin/reports/weekly', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const end = endDate || new Date().toISOString().split('T')[0];
+    
+    const report = await pool.query(`
+      SELECT 
+        DATE(o.created_at) as date,
+        COUNT(DISTINCT o.id) as total_orders,
+        COUNT(DISTINCT o.session_id) as total_sessions,
+        SUM(o.total_price) as total_revenue,
+        AVG(o.total_price) as avg_order_value,
+        COUNT(DISTINCT o.table_id) as tables_used
+      FROM orders o
+      WHERE o.created_at >= $1 AND o.created_at < $2::date + INTERVAL '1 day'
+        AND o.status != 'CANCELLED'
+      GROUP BY DATE(o.created_at)
+      ORDER BY date DESC
+    `, [start, end]);
+    
+    const totals = {
+      total_orders: report.rows.reduce((sum, day) => sum + parseInt(day.total_orders || 0), 0),
+      total_sessions: report.rows.reduce((sum, day) => sum + parseInt(day.total_sessions || 0), 0),
+      total_revenue: report.rows.reduce((sum, day) => sum + parseFloat(day.total_revenue || 0), 0),
+      avg_order_value: report.rows.length > 0 
+        ? report.rows.reduce((sum, day) => sum + parseFloat(day.avg_order_value || 0), 0) / report.rows.length 
+        : 0
+    };
+    
+    res.json({ period: 'weekly', start_date: start, end_date: end, daily_breakdown: report.rows, totals });
+  } catch (err) {
+    console.error('Weekly report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📊 MONTHLY REPORT
+app.get('/admin/reports/monthly', async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const now = new Date();
+    const targetMonth = month || (now.getMonth() + 1);
+    const targetYear = year || now.getFullYear();
+    
+    const report = await pool.query(`
+      SELECT 
+        DATE(o.created_at) as date,
+        COUNT(DISTINCT o.id) as total_orders,
+        COUNT(DISTINCT o.session_id) as total_sessions,
+        SUM(o.total_price) as total_revenue,
+        AVG(o.total_price) as avg_order_value,
+        COUNT(DISTINCT o.table_id) as tables_used
+      FROM orders o
+      WHERE EXTRACT(MONTH FROM o.created_at) = $1
+        AND EXTRACT(YEAR FROM o.created_at) = $2
+        AND o.status != 'CANCELLED'
+      GROUP BY DATE(o.created_at)
+      ORDER BY date DESC
+    `, [targetMonth, targetYear]);
+    
+    const topProducts = await pool.query(`
+      SELECT 
+        m.name,
+        SUM(oi.quantity) as total_sold,
+        SUM(oi.quantity * oi.price) as revenue
+      FROM order_items oi
+      JOIN menu_items m ON oi.menu_item_id = m.id
+      JOIN orders o ON oi.order_id = o.id
+      WHERE EXTRACT(MONTH FROM o.created_at) = $1
+        AND EXTRACT(YEAR FROM o.created_at) = $2
+        AND o.status != 'CANCELLED'
+      GROUP BY m.id, m.name
+      ORDER BY total_sold DESC
+      LIMIT 10
+    `, [targetMonth, targetYear]);
+    
+    const totals = {
+      total_orders: report.rows.reduce((sum, day) => sum + parseInt(day.total_orders || 0), 0),
+      total_sessions: report.rows.reduce((sum, day) => sum + parseInt(day.total_sessions || 0), 0),
+      total_revenue: report.rows.reduce((sum, day) => sum + parseFloat(day.total_revenue || 0), 0),
+      avg_order_value: report.rows.length > 0 
+        ? report.rows.reduce((sum, day) => sum + parseFloat(day.avg_order_value || 0), 0) / report.rows.length 
+        : 0,
+      days_active: report.rows.length
+    };
+    
+    res.json({ period: 'monthly', month: targetMonth, year: targetYear, daily_breakdown: report.rows, top_products: topProducts.rows, totals });
+  } catch (err) {
+    console.error('Monthly report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📊 YEARLY REPORT
+app.get('/admin/reports/yearly', async (req, res) => {
+  try {
+    const { year } = req.query;
+    const targetYear = year || new Date().getFullYear();
+    
+    const report = await pool.query(`
+      SELECT 
+        EXTRACT(MONTH FROM o.created_at) as month,
+        COUNT(DISTINCT o.id) as total_orders,
+        COUNT(DISTINCT o.session_id) as total_sessions,
+        SUM(o.total_price) as total_revenue,
+        AVG(o.total_price) as avg_order_value
+      FROM orders o
+      WHERE EXTRACT(YEAR FROM o.created_at) = $1
+        AND o.status != 'CANCELLED'
+      GROUP BY EXTRACT(MONTH FROM o.created_at)
+      ORDER BY month ASC
+    `, [targetYear]);
+    
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthlyData = report.rows.map(row => ({ ...row, month_name: monthNames[parseInt(row.month) - 1] }));
+    
+    const totals = {
+      total_orders: report.rows.reduce((sum, m) => sum + parseInt(m.total_orders || 0), 0),
+      total_sessions: report.rows.reduce((sum, m) => sum + parseInt(m.total_sessions || 0), 0),
+      total_revenue: report.rows.reduce((sum, m) => sum + parseFloat(m.total_revenue || 0), 0),
+      avg_order_value: report.rows.length > 0 
+        ? report.rows.reduce((sum, m) => sum + parseFloat(m.avg_order_value || 0), 0) / report.rows.length 
+        : 0,
+      months_active: report.rows.length
+    };
+    
+    res.json({ period: 'yearly', year: targetYear, monthly_breakdown: monthlyData, totals });
+  } catch (err) {
+    console.error('Yearly report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📊 WAITER PERFORMANCE
+app.get('/admin/waiter-performance', async (req, res) => {
+  try {
+    const { startDate, endDate, waiterId } = req.query;
+    
+    let query = `
+      SELECT 
+        u.id as waiter_id,
+        u.name as waiter_name,
+        COUNT(DISTINCT s.id) as total_sessions,
+        COUNT(DISTINCT o.id) as total_orders,
+        COALESCE(SUM(o.total_price), 0) as total_revenue,
+        COALESCE(AVG(o.total_price), 0) as avg_order_value,
+        COUNT(DISTINCT DATE(s.opened_at)) as days_worked
+      FROM users u
+      LEFT JOIN table_sessions s ON u.id = s.waiter_id
+      LEFT JOIN orders o ON s.id = o.session_id AND o.status != 'CANCELLED'
+      WHERE u.id IS NOT NULL
+    `;
+    
+    const params = [];
+    if (waiterId) {
+      params.push(waiterId);
+      query += ` AND u.id = $${params.length}`;
+    }
+    if (startDate) {
+      params.push(startDate);
+      query += ` AND s.opened_at >= $${params.length}`;
+    }
+    if (endDate) {
+      params.push(endDate);
+      query += ` AND s.opened_at < $${params.length}::date + INTERVAL '1 day'`;
+    }
+    
+    query += ` GROUP BY u.id, u.name HAVING COUNT(DISTINCT s.id) > 0 ORDER BY total_revenue DESC`;
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Waiter performance error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📊 GET WAITER SHIFTS
+app.get('/waiter/my-shifts', async (req, res) => {
+  try {
+    const { waiter_id, date } = req.query;
+    if (!waiter_id) return res.status(400).json({ error: 'waiter_id required' });
+    
+    const targetDate = date || new Date().toISOString().split('T')[0];
+    
+    const result = await pool.query(`
+      SELECT 
+        s.id as session_id, s.table_id, t.table_number, s.opened_at, s.closed_at, s.status,
+        COUNT(DISTINCT o.id) as order_count,
+        COALESCE(SUM(o.total_price), 0) as session_total
+      FROM table_sessions s
+      JOIN tables t ON s.table_id = t.id
+      LEFT JOIN orders o ON s.id = o.session_id AND o.status != 'CANCELLED'
+      WHERE s.waiter_id = $1 AND DATE(s.opened_at) = $2
+      GROUP BY s.id, t.table_number
+      ORDER BY s.opened_at DESC
+    `, [waiter_id, targetDate]);
+    
+    const totals = {
+      total_sessions: result.rows.length,
+      total_revenue: result.rows.reduce((sum, s) => sum + parseFloat(s.session_total || 0), 0),
+      active_sessions: result.rows.filter(s => s.status === 'ACTIVE').length,
+      closed_sessions: result.rows.filter(s => s.status === 'CLOSED').length
+    };
+    
+    res.json({ date: targetDate, waiter_id: parseInt(waiter_id), shifts: result.rows, totals });
+  } catch (err) {
+    console.error('My shifts error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📊 TOP WAITERS LEADERBOARD
+app.get('/admin/top-waiters', async (req, res) => {
+  try {
+    const { period } = req.query;
+    let dateFilter = "DATE(s.opened_at) = CURRENT_DATE";
+    
+    if (period === 'week') dateFilter = "s.opened_at >= CURRENT_DATE - INTERVAL '7 days'";
+    else if (period === 'month') dateFilter = "s.opened_at >= CURRENT_DATE - INTERVAL '30 days'";
+    
+    const result = await pool.query(`
+      SELECT 
+        u.id, u.name,
+        COUNT(DISTINCT s.id) as sessions_served,
+        COALESCE(SUM(o.total_price), 0) as total_revenue,
+        COALESCE(AVG(o.total_price), 0) as avg_order_value,
+        COUNT(DISTINCT o.id) as total_orders
+      FROM users u
+      JOIN table_sessions s ON u.id = s.waiter_id
+      LEFT JOIN orders o ON s.id = o.session_id AND o.status != 'CANCELLED'
+      WHERE ${dateFilter}
+      GROUP BY u.id, u.name
+      ORDER BY total_revenue DESC
+      LIMIT 10
+    `);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Top waiters error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════
+// ADMIN USER MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+
+// GET ALL USERS
+app.get("/admin/users", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, username, role, name, created_at FROM users ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get users error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CREATE USER
+app.post("/admin/users", requireRole('admin'), async (req, res) => {
+  try {
+    const { username, password, role, name } = req.body;
+
+    if (!username || !password || !role) {
+      return res.status(400).json({ error: 'Username, password, and role required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO users (username, password, role, name)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, username, role, name, created_at`,
+      [username, password, role, name || username]
+    );
+
+    console.log(`✅ User created: ${username}`);
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    console.error('Create user error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// UPDATE USER
+app.put("/admin/users/:id", requireRole('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, password, role, name } = req.body;
+
+    const result = await pool.query(
+      `UPDATE users 
+       SET username = $1, password = $2, role = $3, name = $4
+       WHERE id = $5
+       RETURNING id, username, role, name, created_at`,
+      [username, password, role, name, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log(`✅ User updated: ${id}`);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update user error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE USER
+app.delete("/admin/users/:id", requireRole('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Don't allow deleting yourself
+    if (req.session.user.id == id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    const result = await pool.query(
+      "DELETE FROM users WHERE id = $1 RETURNING id",
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log(`✅ User deleted: ${id}`);
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // ═══════════════════════════════════════════════════════════
 // ADMIN PRODUCTS MANAGEMENT
 // ═══════════════════════════════════════════════════════════
@@ -1220,7 +1669,6 @@ app.delete("/admin/tables/:id", async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Check if table has active sessions
     const activeCheck = await pool.query(
       `SELECT id FROM table_sessions WHERE table_id = $1 AND status = 'ACTIVE'`,
       [id]
@@ -1244,7 +1692,6 @@ app.post("/admin/tables/:id/free", async (req, res) => {
     const { id } = req.params;
     console.log(`🔄 Attempting to free table ID: ${id}`);
     
-    // Cancel any active reservations for this table
     const cancelResult = await pool.query(
       `UPDATE reservations 
        SET status = 'CANCELLED'
@@ -1254,7 +1701,6 @@ app.post("/admin/tables/:id/free", async (req, res) => {
     );
     console.log(`📋 Cancelled ${cancelResult.rowCount} reservations`);
     
-    // Set table status to free
     const freeResult = await pool.query(
       `UPDATE tables SET status = 'free' WHERE id = $1 RETURNING *`,
       [id]
@@ -1278,11 +1724,303 @@ app.post("/admin/tables/:id/free", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// AI FEATURES
+// ═══════════════════════════════════════════════════════════
+
+app.get('/ai/popular-items', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        m.id, m.name, m.price, m.description, m.category_id,
+        COUNT(oi.id) as order_count
+      FROM menu_items m
+      JOIN order_items oi ON m.id = oi.menu_item_id
+      JOIN orders o ON oi.order_id = o.id
+      WHERE o.created_at > CURRENT_DATE
+      GROUP BY m.id, m.name, m.price, m.description, m.category_id
+      HAVING COUNT(oi.id) >= 2
+      ORDER BY order_count DESC
+      LIMIT 10
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Popular items error:', err);
+    res.json([]);
+  }
+});
+
+app.get('/ai/recommendations', async (req, res) => {
+  try {
+    const hour = new Date().getHours();
+    let categoryType;
+    
+    if (hour >= 6 && hour < 11) {
+      categoryType = ['KAFETERIA', 'Antipasta'];
+    } else if (hour >= 11 && hour < 15) {
+      categoryType = ['Mishra', 'Sallata'];
+    } else {
+      categoryType = ['Mishra', 'Pije Alkolike'];
+    }
+    
+    const result = await pool.query(`
+      SELECT 
+        m.id, m.name, m.price, m.description, m.category_id,
+        c.name as category_name
+      FROM menu_items m
+      JOIN categories c ON m.category_id = c.id
+      WHERE c.name = ANY($1) AND m.out_of_stock = false
+      ORDER BY RANDOM()
+      LIMIT 6
+    `, [categoryType]);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Recommendations error:', err);
+    res.json([]);
+  }
+});
+
+app.get('/ai/pairings', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      WITH order_pairs AS (
+        SELECT 
+          oi1.menu_item_id as item1,
+          oi2.menu_item_id as item2,
+          COUNT(*) as pair_count
+        FROM order_items oi1
+        JOIN order_items oi2 ON oi1.order_id = oi2.order_id 
+          AND oi1.menu_item_id < oi2.menu_item_id
+        GROUP BY oi1.menu_item_id, oi2.menu_item_id
+        HAVING COUNT(*) >= 2
+      )
+      SELECT 
+        item1,
+        ARRAY_AGG(item2) as paired_items
+      FROM order_pairs
+      GROUP BY item1
+    `);
+    
+    const pairings = {};
+    result.rows.forEach(row => {
+      pairings[row.item1] = row.paired_items;
+      row.paired_items.forEach(item2 => {
+        if (!pairings[item2]) {
+          pairings[item2] = [];
+        }
+        if (!pairings[item2].includes(row.item1)) {
+          pairings[item2].push(row.item1);
+        }
+      });
+    });
+    
+    res.json(pairings);
+  } catch (err) {
+    console.error('Pairings error:', err);
+    res.json({});
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// DATABASE BACKUP SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+const BACKUP_DIR = path.join(__dirname, 'backups');
+
+if (!fs.existsSync(BACKUP_DIR)) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  console.log('✅ Backups directory created');
+}
+
+const createBackup = () => {
+  return new Promise((resolve, reject) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+    const time = new Date().toTimeString().split(' ')[0].replace(/:/g, '-');
+    const filename = `backup_${timestamp}_${time}.sql`;
+    const filepath = path.join(BACKUP_DIR, filename);
+
+    const dbConfig = {
+      host: 'localhost',
+      port: 5432,
+      database: 'Restaurant_System',
+      user: 'postgres',
+      password: 'Jorgo123.'
+    };
+
+   const command = process.platform === 'win32'
+  ? `set PGPASSWORD=${dbConfig.password} && pg_dump -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -F p -f "${filepath}"`
+  : `PGPASSWORD="${dbConfig.password}" pg_dump -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -F p -f "${filepath}"`;
+   
+  exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error('❌ Backup failed:', error.message);
+        reject(error);
+        return;
+      }
+
+      console.log(`✅ Backup created: ${filename}`);
+      resolve({ filename, filepath, size: fs.statSync(filepath).size });
+    });
+  });
+};
+
+const cleanupOldBackups = () => {
+  const files = fs.readdirSync(BACKUP_DIR);
+  const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+
+  files.forEach(file => {
+    const filepath = path.join(BACKUP_DIR, file);
+    const stats = fs.statSync(filepath);
+    
+    if (stats.mtimeMs < thirtyDaysAgo) {
+      fs.unlinkSync(filepath);
+      console.log(`🗑️  Deleted old backup: ${file}`);
+    }
+  });
+};
+
+const scheduleBackups = () => {
+  const now = new Date();
+  const scheduledTime = new Date();
+  scheduledTime.setHours(2, 0, 0, 0);
+
+  if (now > scheduledTime) {
+    scheduledTime.setDate(scheduledTime.getDate() + 1);
+  }
+
+  const timeUntilBackup = scheduledTime - now;
+
+  setTimeout(async () => {
+    try {
+      await createBackup();
+      cleanupOldBackups();
+    } catch (error) {
+      console.error('Scheduled backup failed:', error);
+    }
+
+    setInterval(async () => {
+      try {
+        await createBackup();
+        cleanupOldBackups();
+      } catch (error) {
+        console.error('Scheduled backup failed:', error);
+      }
+    }, 24 * 60 * 60 * 1000);
+
+  }, timeUntilBackup);
+
+  console.log(`📅 Next automatic backup scheduled for: ${scheduledTime.toLocaleString()}`);
+};
+
+scheduleBackups();
+
+// ═══════════════════════════════════════════════════════════
+// BACKUP ENDPOINTS
+// ═══════════════════════════════════════════════════════════
+
+app.post('/admin/backup/create', requireRole('admin'), async (req, res) => {
+  try {
+    const result = await createBackup();
+    res.json({
+      message: 'Backup created successfully',
+      backup: result
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Backup failed' });
+  }
+});
+
+app.get('/admin/backup/list', requireRole('admin'), (req, res) => {
+  try {
+    const files = fs.readdirSync(BACKUP_DIR);
+    
+    const backups = files
+      .filter(f => f.endsWith('.sql'))
+      .map(f => {
+        const filepath = path.join(BACKUP_DIR, f);
+        const stats = fs.statSync(filepath);
+        return {
+          filename: f,
+          size: stats.size,
+          created: stats.mtime,
+          sizeFormatted: (stats.size / 1024 / 1024).toFixed(2) + ' MB'
+        };
+      })
+      .sort((a, b) => b.created - a.created);
+
+    res.json({ backups });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to list backups' });
+  }
+});
+
+app.get('/admin/backup/download/:filename', requireRole('admin'), (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filepath = path.join(BACKUP_DIR, filename);
+
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ error: 'Backup not found' });
+    }
+
+    res.download(filepath);
+  } catch (error) {
+    res.status(500).json({ error: 'Download failed' });
+  }
+});
+
+app.delete('/admin/backup/:filename', requireRole('admin'), (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filepath = path.join(BACKUP_DIR, filename);
+
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ error: 'Backup not found' });
+    }
+
+    fs.unlinkSync(filepath);
+    res.json({ message: 'Backup deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+app.post('/admin/backup/restore/:filename', requireRole('admin'), (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(BACKUP_DIR, filename);
+
+  if (!fs.existsSync(filepath)) {
+    return res.status(404).json({ error: 'Backup not found' });
+  }
+
+  const dbConfig = {
+    host: 'localhost',
+    port: 5432,
+    database: 'Restaurant_System',
+    user: 'postgres',
+    password: 'Jorgo123.'
+  };
+
+  const command = `PGPASSWORD="${dbConfig.password}" psql -h ${dbConfig.host} -p ${dbConfig.port} -U ${dbConfig.user} -d ${dbConfig.database} -f "${filepath}"`;
+
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.error('❌ Restore failed:', error.message);
+      return res.status(500).json({ error: 'Restore failed' });
+    }
+
+    console.log('✅ Database restored from:', filename);
+    res.json({ message: 'Database restored successfully' });
+  });
+});
+
+console.log('✅ Backup system initialized');
+
+// ═══════════════════════════════════════════════════════════
 // SERVE STATIC FILES
 // ═══════════════════════════════════════════════════════════
 
 app.use('/public', express.static('public'));
-
 
 // 🚀 START SERVER
 server.listen(3000, () => {
@@ -1293,21 +2031,20 @@ server.listen(3000, () => {
   console.log("   GET  /categories");
   console.log("   GET  /menu_items");
   console.log("   GET  /tables");
-  console.log("   GET  /orders");
   console.log("   POST /orders");
   console.log("   POST /reservations");
   console.log("");
-  console.log("🔧 Admin endpoints:");
-  console.log("   POST   /admin/products");
-  console.log("   PUT    /admin/products/:id");
-  console.log("   DELETE /admin/products/:id");
-  console.log("   POST   /admin/categories");
-  console.log("   POST   /admin/tables");
-  console.log("   POST   /admin/tables/:id/free");
+  console.log("🔐 Auth endpoints:");
+  console.log("   POST /auth/login");
+  console.log("   POST /auth/logout");
+  console.log("   GET  /auth/me");
   console.log("");
-  console.log("🤖 AI endpoints:");
-  console.log("   GET  /ai/popular-items");
-  console.log("   GET  /ai/recommendations");
-  console.log("   GET  /ai/pairings");
+  console.log("💾 Backup endpoints:");
+  console.log("   POST   /admin/backup/create");
+  console.log("   GET    /admin/backup/list");
+  console.log("   GET    /admin/backup/download/:filename");
+  console.log("   DELETE /admin/backup/:filename");
+  console.log("   POST   /admin/backup/restore/:filename");
+  console.log("");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 });
