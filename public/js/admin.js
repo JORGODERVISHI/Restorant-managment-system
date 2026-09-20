@@ -5,9 +5,19 @@
 const { useState, useEffect } = React;
 const API = window.location.port === '5501' ? 'http://localhost:3000' : '';
 
+// 👤 Përdoruesi i loguar, i vendosur nga auth check në admin.html
+const currentUser = window.currentUser || null;
+
 function AdminPanel() {
   const [view, setView] = useState('dashboard');
   const [stats, setStats] = useState(null);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('user');
+    sessionStorage.removeItem('isLoggedIn');
+    sessionStorage.removeItem('loginTime');
+    window.location.href = '/public/login.html';
+  };
 
   useEffect(() => {
     if (view === 'dashboard') loadDashboard();
@@ -26,7 +36,7 @@ function AdminPanel() {
     <div className="admin-layout">
       <Sidebar current={view} onNavigate={setView} />
       <div className="main-content">
-        <Header title={getTitleForView(view)} />
+        <Header title={getTitleForView(view)} user={currentUser} onLogout={handleLogout} />
         <div className="content-body">
           {view === 'dashboard' && <Dashboard stats={stats} onNavigate={setView} />}
           {view === 'inventory' && <Inventory />}
@@ -81,17 +91,39 @@ function Sidebar({ current, onNavigate }) {
   );
 }
 
-function Header({ title }) {
+function Header({ title, user, onLogout }) {
   return (
     <div className="header">
       <h2>{title}</h2>
-      <div className="header-date">
-        {new Date().toLocaleDateString('en-US', { 
-          weekday: 'long', 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
-        })}
+      <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <div className="header-date">
+          {new Date().toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          })}
+        </div>
+        {user && (
+          <>
+            <span style={{ fontWeight: 'bold' }}>👤 {user.name} ({user.role})</span>
+            <button
+              onClick={onLogout}
+              style={{
+                background: '#dc3545',
+                color: 'white',
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 'bold'
+              }}
+            >
+              🚪 Logout
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -980,27 +1012,41 @@ function UserManagement() {
 
   const handleSave = async () => {
     try {
-      if (!formData.username || !formData.password) {
+      if (!formData.username || (!editUser && !formData.password)) {
         alert('Username and password required!');
         return;
       }
 
-      const response = await fetch('http://localhost:3000/admin/users', {
-        method: 'POST',
+      const isEdit = !!editUser;
+      const url = isEdit
+        ? `http://localhost:3000/admin/users/${editUser.id}`
+        : 'http://localhost:3000/admin/users';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      // 🔒 Nëse jemi duke edituar dhe fjalëkalimi u lë bosh, mos e dërgo
+      //    fare në payload — kështu backend-i e di ta lërë të pandryshuar
+      const payload = { ...formData };
+      if (isEdit && !payload.password) {
+        delete payload.password;
+      }
+
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        alert('Error: ' + (data.error || 'Failed to create user'));
+        alert('Error: ' + (data.error || `Failed to ${isEdit ? 'update' : 'create'} user`));
         return;
       }
 
-      alert('✅ User created!');
+      alert(isEdit ? '✅ User updated!' : '✅ User created!');
       setFormData({ name: '', username: '', password: '', role: 'waiter' });
+      setEditUser(null);
       setShowModal(false);
       loadUsers();
 
@@ -1055,8 +1101,8 @@ function UserManagement() {
             width: '100%', maxWidth: '500px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0 }}>Add User</h2>
-              <button onClick={() => setShowModal(false)}
+              <h2 style={{ margin: 0 }}>{editUser ? 'Edit User' : 'Add User'}</h2>
+              <button onClick={() => { setShowModal(false); setEditUser(null); }}
                 style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}>
                 ✕
               </button>
@@ -1079,9 +1125,11 @@ function UserManagement() {
             </div>
 
             <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Password</label>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                Password {editUser && <span style={{ fontWeight: 'normal', color: '#888' }}>(lëre bosh për ta lënë të pandryshuar)</span>}
+              </label>
               <input type="password" name="password" value={formData.password}
-                onChange={handleInputChange} placeholder="Password"
+                onChange={handleInputChange} placeholder={editUser ? 'Leave blank to keep current' : 'Password'}
                 style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', boxSizing: 'border-box' }}
               />
             </div>
@@ -1104,7 +1152,7 @@ function UserManagement() {
               </button>
               <button onClick={handleSave}
                 style={{ padding: '10px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Save User
+                {editUser ? 'Update User' : 'Save User'}
               </button>
             </div>
           </div>
@@ -1138,7 +1186,16 @@ function UserManagement() {
                 </span>
               </td>
               <td>
-                <button onClick={() => alert('Edit not implemented')} className="btn-small" style={{ marginRight: '5px' }}>
+                <button onClick={() => {
+                  setEditUser(user);
+                  setFormData({
+                    name: user.name || '',
+                    username: user.username || '',
+                    password: '',
+                    role: user.role || 'waiter'
+                  });
+                  setShowModal(true);
+                }} className="btn-small" style={{ marginRight: '5px' }}>
                   Edit
                 </button>
                 <button onClick={() => handleDelete(user.id)} className="btn-danger btn-small">
@@ -1398,7 +1455,7 @@ function SystemSettings() {
           </div>
         </div>
 
-        <button className="btn-primary" onClick={handleSave} className="btn-success">Save Settings</button>
+        <button className="btn-success" onClick={handleSave}>Save Settings</button>
       </div>
     </div>
   );

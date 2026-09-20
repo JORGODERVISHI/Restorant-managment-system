@@ -337,8 +337,9 @@ function KioskApp() {
       
       setTimeout(() => setToast(''), 4000);
     } catch (error) {
-      alert('Gabim në dërgimin e porosisë');
-    }
+  console.error('Error loading data:', error);
+  // Thjesht log-o gabimin, mos shfaq alert
+}
   };
 
   if (loading) return React.createElement('div', { className: 'loading' }, 'Loading...');

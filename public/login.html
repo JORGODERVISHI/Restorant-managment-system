@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Restaurant - Login</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.8/axios.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -249,7 +250,7 @@
         Login
       </button>
 
-      <div class="loading" id="loading">
+      <div class="loading" id="loadingSpinner">
         <span class="spinner"></span>
         <span>Logging in...</span>
       </div>
@@ -264,106 +265,270 @@
   </div>
 
   <script>
-    const loginForm = document.getElementById('loginForm');
-    const usernameInput = document.getElementById('username');
-    const passwordInput = document.getElementById('password');
-    const loginBtn = document.getElementById('loginBtn');
-    const loading = document.getElementById('loading');
-    const errorMessage = document.getElementById('errorMessage');
-    const successMessage = document.getElementById('successMessage');
+   const loginForm = document.getElementById('loginForm');
+const usernameInput = document.getElementById('username');
+const passwordInput = document.getElementById('password');
+const loginBtn = document.getElementById('loginBtn');
+const errorMessage = document.getElementById('errorMessage');
+const successMessage = document.getElementById('successMessage');
+const loadingSpinner = document.getElementById('loadingSpinner');
 
-    loginForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
+// ═══════════════════════════════════════════════════════════
+// 🔀 RIDREJTIMI I ZGJUAR - kthehu te faqja që përdoruesi donte
+// të hapte fillimisht (nëse ekziston dhe roli përputhet),
+// përndryshe shko te faqja e paracaktuar për rolin e tij
+// ═══════════════════════════════════════════════════════════
+const ROLE_DEFAULT_PAGE = {
+  admin: '/public/admin.html',
+  waiter: '/public/waiter.html',
+  kitchen: '/public/kitchen.html',
+  bar: '/public/bar.html'
+};
+
+const PAGE_ROLES = {
+  'admin.html': 'admin',
+  'waiter.html': 'waiter',
+  'kitchen.html': 'kitchen',
+  'bar.html': 'bar'
+};
+
+function getRedirectUrl(user) {
+  const intended = sessionStorage.getItem('redirectAfterLogin');
+  sessionStorage.removeItem('redirectAfterLogin');
+
+  if (intended) {
+    const pageName = intended.split('/').pop();
+    const requiredRole = PAGE_ROLES[pageName];
+    // Ridrejto te faqja e synuar vetëm nëse roli i përdoruesit përputhet
+    if (!requiredRole || requiredRole === user.role) {
+      return intended;
+    }
+  }
+
+  return ROLE_DEFAULT_PAGE[user.role] || '/public/kiosk.html';
+}
+
+// ═══════════════════════════════════════════════════════════
+// FORM SUBMISSION
+// ═══════════════════════════════════════════════════════════
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  
+  const username = usernameInput.value.trim();
+  const password = passwordInput.value.trim();
+
+  // Validation
+  if (!username || !password) {
+    showError('❌ Please fill in all fields');
+    return;
+  }
+
+  if (username.length < 3) {
+    showError('❌ Username must be at least 3 characters');
+    return;
+  }
+
+  if (password.length < 6) {
+    showError('❌ Password must be at least 6 characters');
+    return;
+  }
+
+  // Attempt login
+  await login(username, password);
+});
+
+// ═══════════════════════════════════════════════════════════
+// LOGIN FUNCTION
+// ═══════════════════════════════════════════════════════════
+
+async function login(username, password) {
+  try {
+    // Show loading
+    setLoading(true);
+    clearMessages();
+
+    console.log('🔄 Attempting login...');
+    console.log('Username:', username);
+
+    // Send login request
+    const response = await axios.post(
+      'http://localhost:3000/auth/login',
+      {
+        username: username,
+        password: password
+      },
+      {
+        withCredentials: true  // ← Send cookies
+      }
+    );
+
+    console.log('✅ Login successful!');
+    console.log('Response:', response.data);
+
+    // ═══════════════════════════════════════════════════════
+    // ✅ NEW: SAVE USER INFO TO sessionStorage (i izoluar për çdo tab)
+    // ═══════════════════════════════════════════════════════
+    const user = response.data.user;
+    sessionStorage.setItem('user', JSON.stringify(user));
+    sessionStorage.setItem('isLoggedIn', 'true');
+    sessionStorage.setItem('loginTime', new Date().toISOString());
+
+    console.log('✅ User info saved to sessionStorage (per-tab)');
+    console.log('User:', user);
+
+    // Show success message
+    showSuccess('✅ Login successful! Redirecting...');
+
+    // ═══════════════════════════════════════════════════════
+    // REDIRECT BASED ON ROLE
+    // ═══════════════════════════════════════════════════════
+    setTimeout(() => {
+      const redirectUrl = getRedirectUrl(user);
+      console.log('🚀 Redirecting to:', redirectUrl);
+      window.location.href = redirectUrl;
+    }, 1000);
+
+  } catch (error) {
+    console.error('❌ Login failed!');
+    console.error('Error:', error);
+
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Data:', error.response.data);
       
-      const username = usernameInput.value.trim();
-      const password = passwordInput.value;
-
-      if (!username || !password) {
-        showError('Please enter both username and password');
-        return;
-      }
-
-      loginBtn.disabled = true;
-      loading.style.display = 'block';
-      errorMessage.classList.remove('show');
-
-      try {
-        console.log('🔄 Attempting login...');
-        
-        const response = await fetch('http://localhost:3000/auth/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-          mode: 'cors',
-          body: JSON.stringify({ username, password }),
-        });
-
-        console.log('Response status:', response.status);
-        const data = await response.json();
-        console.log('Response data:', data);
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Login failed');
-        }
-
-        // ✅ STORE USER DATA
-        sessionStorage.setItem('user', JSON.stringify(data.user));
-        sessionStorage.setItem('token', data.token);
-        
-        console.log('✅ Login successful!', data.user);
-        showSuccess('Login successful! Redirecting...');
-
-        // ✅ REDIRECT BASED ON ROLE
-        setTimeout(() => {
-          const role = data.user.role;
-          console.log('User role:', role);
-          
-          let redirectUrl = '/public/admin.html';
-          
-          if (role === 'admin') {
-            redirectUrl = '/public/admin.html';
-          } else if (role === 'waiter') {
-            redirectUrl = '/public/waiter.html';
-          } else if (role === 'kitchen') {
-            redirectUrl = '/public/kitchen.html';
-          } else if (role === 'bar') {
-            redirectUrl = '/public/bar.html';
-          }
-          
-          console.log('🚀 Redirecting to:', redirectUrl);
-          window.location.href = redirectUrl;
-        }, 1500);
-
-      } catch (error) {
-        console.error('❌ Login error:', error);
-        showError(error.message || 'Login failed. Please try again.');
-      } finally {
-        loginBtn.disabled = false;
-        loading.style.display = 'none';
-      }
-    });
-
-    function showError(message) {
-      errorMessage.textContent = '❌ ' + message;
-      errorMessage.classList.add('show');
-      successMessage.classList.remove('show');
+      const errorMsg = error.response.data?.error || 'Login failed';
+      showError('❌ ' + errorMsg);
+    } else if (error.request) {
+      console.error('No response from server');
+      showError('❌ No response from server. Is the server running?');
+    } else {
+      console.error('Error message:', error.message);
+      showError('❌ ' + error.message);
     }
 
-    function showSuccess(message) {
-      successMessage.textContent = '✅ ' + message;
-      successMessage.classList.add('show');
-      errorMessage.classList.remove('show');
-    }
+    // Clear password field on error
+    passwordInput.value = '';
+  } finally {
+    setLoading(false);
+  }
+}
 
-    usernameInput.focus();
+// ═══════════════════════════════════════════════════════════
+// ERROR MESSAGE FUNCTION
+// ═══════════════════════════════════════════════════════════
 
-    passwordInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        loginForm.dispatchEvent(new Event('submit'));
-      }
-    });
+function showError(message) {
+  console.error(message);
+  errorMessage.textContent = message;
+  errorMessage.style.display = 'block';
+  errorMessage.style.background = '#fee';
+  errorMessage.style.color = '#c33';
+  errorMessage.style.padding = '10px';
+  errorMessage.style.borderRadius = '5px';
+  errorMessage.style.marginBottom = '20px';
+  errorMessage.style.border = '1px solid #c33';
+  successMessage.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// SUCCESS MESSAGE FUNCTION
+// ═══════════════════════════════════════════════════════════
+
+function showSuccess(message) {
+  console.log(message);
+  successMessage.textContent = message;
+  successMessage.style.display = 'block';
+  successMessage.style.background = '#efe';
+  successMessage.style.color = '#3c3';
+  successMessage.style.padding = '10px';
+  successMessage.style.borderRadius = '5px';
+  successMessage.style.marginBottom = '20px';
+  successMessage.style.border = '1px solid #3c3';
+  errorMessage.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// CLEAR MESSAGES
+// ═══════════════════════════════════════════════════════════
+
+function clearMessages() {
+  errorMessage.style.display = 'none';
+  successMessage.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// LOADING STATE
+// ═══════════════════════════════════════════════════════════
+
+function setLoading(isLoading) {
+  if (isLoading) {
+    loginBtn.disabled = true;
+    loginBtn.textContent = '🔄 Logging in...';
+    if (loadingSpinner) loadingSpinner.style.display = 'block';
+  } else {
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'Login';
+    if (loadingSpinner) loadingSpinner.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// ENTER KEY SUPPORT
+// ═══════════════════════════════════════════════════════════
+
+usernameInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    passwordInput.focus();
+  }
+});
+
+passwordInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    loginForm.dispatchEvent(new Event('submit'));
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// CHECK IF ALREADY LOGGED IN
+// ═══════════════════════════════════════════════════════════
+
+window.addEventListener('load', () => {
+  const isLoggedIn = sessionStorage.getItem('isLoggedIn');
+  const user = JSON.parse(sessionStorage.getItem('user') || 'null');
+
+  if (isLoggedIn && user) {
+    console.log('✅ User already logged in:', user.name);
+    console.log('Redirecting to dashboard...');
+    window.location.href = getRedirectUrl(user);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// LOGOUT FUNCTION (for use in other pages)
+// ═══════════════════════════════════════════════════════════
+
+function logout() {
+  console.log('🚪 Logging out...');
+  
+  // Clear sessionStorage (vetëm për këtë tab)
+  sessionStorage.removeItem('user');
+  sessionStorage.removeItem('isLoggedIn');
+  sessionStorage.removeItem('loginTime');
+
+  console.log('✅ Logged out successfully');
+
+  // Redirect to login
+  window.location.href = '/public/login.html';
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORT LOGOUT FOR OTHER PAGES
+// ═══════════════════════════════════════════════════════════
+
+window.logout = logout;
+
+console.log('✅ login.js loaded');
   </script>
 </body>
 </html>

@@ -185,7 +185,25 @@ app.post('/auth/login', async (req, res) => {
 
     const user = result.rows[0];
 
-    if (password !== user.password) {
+    // 🔒 Fjalëkalimet e hash-uara me bcrypt fillojnë gjithmonë me $2a$/$2b$/$2y$
+    const isBcryptHash = /^\$2[aby]\$\d{2}\$/.test(user.password);
+
+    let passwordMatches;
+    if (isBcryptHash) {
+      passwordMatches = await bcrypt.compare(password, user.password);
+    } else {
+      // Përdorues i vjetër, ende me fjalëkalim në tekst të thjeshtë (para migrimit)
+      passwordMatches = password === user.password;
+
+      if (passwordMatches) {
+        // ✅ Migrim transparent: hash-oje tani, që herës tjetër të jetë i sigurt
+        const newHash = await bcrypt.hash(password, 10);
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [newHash, user.id]);
+        console.log(`🔐 Fjalëkalimi i "${user.username}" u migrua automatikisht në bcrypt hash`);
+      }
+    }
+
+    if (!passwordMatches) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
@@ -1410,11 +1428,14 @@ app.post("/admin/users", requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: 'Username, password, and role required' });
     }
 
+    // 🔒 Hash-o fjalëkalimin para se ta ruash — kurrë s'ruhet tekst i thjeshtë
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const result = await pool.query(
       `INSERT INTO users (username, password, role, name)
        VALUES ($1, $2, $3, $4)
        RETURNING id, username, role, name, created_at`,
-      [username, password, role, name || username]
+      [username, hashedPassword, role, name || username]
     );
 
     console.log(`✅ User created: ${username}`);
@@ -1434,13 +1455,23 @@ app.put("/admin/users/:id", requireRole('admin'), async (req, res) => {
     const { id } = req.params;
     const { username, password, role, name } = req.body;
 
-    const result = await pool.query(
-      `UPDATE users 
-       SET username = $1, password = $2, role = $3, name = $4
-       WHERE id = $5
-       RETURNING id, username, role, name, created_at`,
-      [username, password, role, name, id]
-    );
+    // 🔒 Nëse fjalëkalimi u dërgua, hash-oje para ruajtjes.
+    //    Nëse s'u dërgua (u editua pa e prekur atë fushë), mos e prek në DB.
+    const result = password
+      ? await pool.query(
+          `UPDATE users 
+           SET username = $1, password = $2, role = $3, name = $4
+           WHERE id = $5
+           RETURNING id, username, role, name, created_at`,
+          [username, await bcrypt.hash(password, 10), role, name, id]
+        )
+      : await pool.query(
+          `UPDATE users 
+           SET username = $1, role = $2, name = $3
+           WHERE id = $4
+           RETURNING id, username, role, name, created_at`,
+          [username, role, name, id]
+        );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });

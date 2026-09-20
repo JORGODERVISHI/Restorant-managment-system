@@ -733,7 +733,7 @@ function NewOrderModal({ onClose, onSuccess }) {
           body: JSON.stringify({table_id: selectedTable})
         });
         const openData = await openRes.json();
-        sessionId = openData.session.id;
+        sessionId = openData.id;
       }
       const orderRes = await fetch(`${API}/orders`, {
         method: 'POST',
@@ -748,9 +748,12 @@ function NewOrderModal({ onClose, onSuccess }) {
       if (orderRes.ok) {
         alert('Porosia u shtua!');
         onSuccess();
+      } else {
+        const errData = await orderRes.json().catch(() => ({}));
+        alert('❌ Porosia dështoi: ' + (errData.error || 'Gabim i panjohur'));
       }
     } catch(e) {
-      alert('Gabim');
+      alert('❌ Gabim: ' + e.message);
     }
   };
 
@@ -849,9 +852,12 @@ function AddItemsModal({ sessionId, onClose, onSuccess }) {
       if (res.ok) {
         alert('Produktet u shtuan!');
         onSuccess();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert('❌ Shtimi dështoi: ' + (errData.error || 'Gabim i panjohur'));
       }
     } catch(e) {
-      alert('Gabim');
+      alert('❌ Gabim: ' + e.message);
     }
   };
 
